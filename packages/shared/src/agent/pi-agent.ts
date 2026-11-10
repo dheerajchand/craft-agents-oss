@@ -1176,9 +1176,6 @@ export class PiAgent extends BaseAgent {
     let adaptedEvent = event;
 
     if (eventType === 'tool_execution_start') {
-      if (typeof event.toolCallId === 'string' && event.args && typeof event.args === 'object') {
-        this.workspaceHookToolInputs.set(event.toolCallId, event.args as Record<string, unknown>);
-      }
       const toolName = event.toolName as string;
       if (toolName?.startsWith('session__') || toolName?.startsWith('mcp__session__')) {
         // Session tool tracking is handled by the subprocess; it sends
@@ -1216,6 +1213,10 @@ export class PiAgent extends BaseAgent {
     // The event adapter expects typed PiAgentEvent/AgentSessionEvent objects,
     // but since we're receiving plain JSON, we cast through unknown.
     for (const agentEvent of this.adapter.adaptEvent(adaptedEvent as any)) {
+      if (agentEvent.type === 'tool_start') {
+        // Reuse the adapter's canonical SDK input (e.g. Pi path -> file_path).
+        this.workspaceHookToolInputs.set(agentEvent.toolUseId, agentEvent.input as Record<string, unknown>);
+      }
       // Track Read tool calls for prerequisite checking
       if (agentEvent.type === 'tool_start' && agentEvent.toolName === 'Read') {
         this.prerequisiteManager.trackReadTool(agentEvent.input as Record<string, unknown>);
