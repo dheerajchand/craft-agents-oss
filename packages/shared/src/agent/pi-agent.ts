@@ -96,7 +96,7 @@ import { parseError, type AgentError } from './errors.ts';
 
 // Centralized PreToolUse pipeline
 import { runPreToolUseChecks, type PreToolUseCheckResult, type PreToolUseInput } from './core/pre-tool-use.ts';
-import { runWorkspaceCommandHooks } from './core/workspace-command-hooks.ts';
+import { runWorkspaceCommandHooks, WorkspaceCommandHookError } from './core/workspace-command-hooks.ts';
 import type { AgentEvent as AutomationAgentEvent, SdkAutomationInput } from '../automations/types.ts';
 import type { PermissionRemember } from './core/permission-remember.ts';
 import { applyGuardedModeCheck, needsGuardedModeCheck } from './core/guarded-mode.ts';
@@ -2078,7 +2078,7 @@ export class PiAgent extends BaseAgent {
           cwd: this.config.session?.workingDirectory || this.workingDirectory || workspace, signal,
         });
       } catch (error) {
-        if (event === 'PreToolUse' || event === 'UserPromptSubmit') throw error;
+        if (event === 'PreToolUse' || event === 'UserPromptSubmit') throw new WorkspaceCommandHookError(error);
         this.debug(`Workspace ${event} hook failed: ${error}`);
       }
     }
@@ -2325,7 +2325,8 @@ export class PiAgent extends BaseAgent {
       }
     } catch (error) {
       if (compactMatch) yield { type: 'compaction_failed' };
-      if (error instanceof Error && error.message.includes('abort')) {
+      if (this.turnAbort.signal.aborted || (error instanceof Error
+        && !(error instanceof WorkspaceCommandHookError) && error.message.includes('abort'))) {
         if (compactMatch) yield { type: 'complete' };
         if (this.abortReason === AbortReason.PlanSubmitted) {
           return;

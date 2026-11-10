@@ -37,6 +37,30 @@ describe('Pi workspace command hooks', () => {
     expect(events.some(event => event.type === 'error' && event.message.includes('prompt-hook-denied'))).toBe(true);
     expect(events.at(-1)?.type).toBe('complete');
   });
+  it('shows hook refusals mentioning abort instead of silently treating them as cancellation', async () => {
+    const c = fixture({ UserPromptSubmit: group('echo "hook refusal: abort this operation" >&2; exit 2') });
+    const agent = new PiAgent({ provider: 'pi', workspace: { id: 'hook-test', name: 'Hooks', rootPath: c.workspace }, session: { id: c.sessionId, workspaceRootPath: c.workspace, workingDirectory: c.cwd, createdAt: Date.now(), lastUsedAt: Date.now() }, isHeadless: true } as any);
+    let started = false;
+    (agent as any).ensureSubprocess = async () => { started = true; throw new Error('must not start'); };
+    const events: any[] = [];
+    for await (const event of (agent as any).chatImpl('private test')) events.push(event);
+    agent.destroy();
+    expect(started).toBe(false);
+    expect(events.some(event => event.type === 'error' && event.message.includes('hook refusal: abort'))).toBe(true);
+    expect(events.at(-1)?.type).toBe('complete');
+  });
+  it('still honors a genuine user cancellation while a prompt hook is running', async () => {
+    const c = fixture({ UserPromptSubmit: group('sleep 30') });
+    const agent = new PiAgent({ provider: 'pi', workspace: { id: 'hook-test', name: 'Hooks', rootPath: c.workspace }, session: { id: c.sessionId, workspaceRootPath: c.workspace, workingDirectory: c.cwd, createdAt: Date.now(), lastUsedAt: Date.now() }, isHeadless: true } as any);
+    let started = false;
+    (agent as any).ensureSubprocess = async () => { started = true; throw new Error('must not start'); };
+    const timer = setTimeout(() => { void agent.abort(); }, 30);
+    const events: any[] = [];
+    try { for await (const event of (agent as any).chatImpl('private test')) events.push(event); }
+    finally { clearTimeout(timer); agent.destroy(); }
+    expect(started).toBe(false);
+    expect(events.some(event => event.type === 'error')).toBe(false);
+  });
   it('carries the actual Pi tool id through successful and failed post-tool events', async () => {
     for (const failed of [false, true]) {
       const event = failed ? 'PostToolUseFailure' : 'PostToolUse';
