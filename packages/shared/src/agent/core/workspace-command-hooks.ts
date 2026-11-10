@@ -2,6 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
+export class WorkspaceCommandHookError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'WorkspaceCommandHookError';
+  }
+}
+
 export interface WorkspaceHookContext {
   workspace: string;
   sessionId: string;
