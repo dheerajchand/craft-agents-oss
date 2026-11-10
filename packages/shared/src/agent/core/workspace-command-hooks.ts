@@ -75,7 +75,12 @@ function executeCommand(command: string, payload: string, env: NodeJS.ProcessEnv
       try {
         if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL');
         else child.kill('SIGKILL');
-      } catch { /* close/error still settles the invocation */ }
+      } catch { /* termination is best effort, settlement is not */ }
+      cleanup();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      reject(failure);
     };
     const abort = () => stop('Workspace hook aborted');
     context.signal?.addEventListener('abort', abort, { once: true });
