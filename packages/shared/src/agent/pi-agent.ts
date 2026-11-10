@@ -96,6 +96,8 @@ import { parseError, type AgentError } from './errors.ts';
 
 // Centralized PreToolUse pipeline
 import { runPreToolUseChecks, type PreToolUseCheckResult, type PreToolUseInput } from './core/pre-tool-use.ts';
+import { runWorkspaceCommandHooks } from './core/workspace-command-hooks.ts';
+import type { AgentEvent as AutomationAgentEvent, SdkAutomationInput } from '../automations/types.ts';
 import type { PermissionRemember } from './core/permission-remember.ts';
 import { applyGuardedModeCheck, needsGuardedModeCheck } from './core/guarded-mode.ts';
 import { getRtkPath } from './core/rtk-detector.ts';
@@ -341,6 +343,9 @@ export class PiAgent extends BaseAgent {
     resolve: (updated: boolean) => void;
     reject: (error: Error) => void;
   }> = new Map();
+
+  // Actual subprocess tool-start arguments, retained until the paired post hook.
+  private workspaceHookToolInputs = new Map<string, Record<string, unknown>>();
 
   // Metadata captured before PreToolUse stripping, keyed by toolCallId.
   // This provides a deterministic bridge when side-channel metadata store misses.
@@ -1171,6 +1176,9 @@ export class PiAgent extends BaseAgent {
     let adaptedEvent = event;
 
     if (eventType === 'tool_execution_start') {
+      if (typeof event.toolCallId === 'string' && event.args && typeof event.args === 'object') {
+        this.workspaceHookToolInputs.set(event.toolCallId, event.args as Record<string, unknown>);
+      }
       const toolName = event.toolName as string;
       if (toolName?.startsWith('session__') || toolName?.startsWith('mcp__session__')) {
         // Session tool tracking is handled by the subprocess; it sends
@@ -1230,11 +1238,13 @@ export class PiAgent extends BaseAgent {
         this.emitAutomationEvent(hookEvent, {
           hook_event_name: hookEvent,
           tool_name: agentEvent.toolName ?? (event.toolName as string) ?? 'unknown',
-          tool_input: agentEvent.input,
+          tool_use_id: agentEvent.toolUseId,
+          tool_input: agentEvent.input ?? this.workspaceHookToolInputs.get(agentEvent.toolUseId),
           ...(agentEvent.isError
             ? { error: typeof agentEvent.result === 'string' ? agentEvent.result : undefined }
             : { tool_response: typeof agentEvent.result === 'string' ? agentEvent.result : undefined }),
         });
+        this.workspaceHookToolInputs.delete(agentEvent.toolUseId);
       }
 
       this.eventQueue.enqueue(agentEvent);
@@ -1248,6 +1258,7 @@ export class PiAgent extends BaseAgent {
     // a compaction_end failure that drains a held overflow, or a cancelled
     // auto-retry.
     if (this.adapter.shouldCompleteQueue(eventType === 'agent_end')) {
+      this.workspaceHookToolInputs.clear();
       this.eventQueue.complete();
     }
   }
@@ -1280,12 +1291,16 @@ export class PiAgent extends BaseAgent {
       this.debug(`Captured pre-tool metadata for ${toolName} (${toolCallId}, sessionId=${debugSessionId}): intent=${!!preIntent}, displayName=${!!preDisplayName}`);
     }
 
-    // Report PreToolUse to the AutomationSystem (matched only — agent events run no actions, #1117)
-    await this.emitAutomationEvent('PreToolUse', {
-      hook_event_name: 'PreToolUse',
-      tool_name: toolName,
-      tool_input: input,
-    });
+    try {
+      await this.emitAutomationEvent('PreToolUse', {
+        hook_event_name: 'PreToolUse', tool_name: toolName,
+        tool_input: input, tool_use_id: toolCallId,
+      }, turnSignal);
+    } catch (error) {
+      this.send({ type: 'pre_tool_use_response', requestId, action: 'block',
+        reason: error instanceof Error ? error.message : String(error) });
+      return;
+    }
 
     const rootPath = this.config.workspace.rootPath ?? this.workingDirectory;
     const workspaceSlug = extractWorkspaceSlug(rootPath, this.config.workspace.id);
@@ -1878,6 +1893,7 @@ export class PiAgent extends BaseAgent {
 
     // Drop any cached pre-tool metadata for the dead subprocess.
     this.preToolMetadataByCallId.clear();
+    this.workspaceHookToolInputs.clear();
   }
 
   /**
@@ -2047,6 +2063,28 @@ export class PiAgent extends BaseAgent {
   }
 
   // ============================================================
+  // Workspace command hooks are independent of prompt-based automations.
+  // Blocking events propagate failure; notification events report it without
+  // producing an unhandled fire-and-forget rejection.
+  protected override async emitAutomationEvent(
+    event: AutomationAgentEvent, input: SdkAutomationInput, signal?: AbortSignal,
+  ): Promise<void> {
+    const workspace = this.config.workspace.rootPath;
+    const sessionId = this.config.session?.id || this._sessionId;
+    if (workspace && sessionId) {
+      try {
+        await runWorkspaceCommandHooks(event, input as unknown as Record<string, unknown>, {
+          workspace, sessionId, sessionDir: getSessionPath(workspace, sessionId),
+          cwd: this.config.session?.workingDirectory || this.workingDirectory || workspace, signal,
+        });
+      } catch (error) {
+        if (event === 'PreToolUse' || event === 'UserPromptSubmit') throw error;
+        this.debug(`Workspace ${event} hook failed: ${error}`);
+      }
+    }
+    await super.emitAutomationEvent(event, input, signal);
+  }
+
   // Chat (AsyncGenerator backed by the subprocess event queue)
   // ============================================================
 
@@ -2065,12 +2103,6 @@ export class PiAgent extends BaseAgent {
     this.eventQueue.reset();
     this.adapter.startTurn();
 
-    // Fire UserPromptSubmit hook event (fire-and-forget)
-    this.emitAutomationEvent('UserPromptSubmit', {
-      hook_event_name: 'UserPromptSubmit',
-      prompt: message,
-    });
-
     // Refresh session-scoped tool callbacks (for SubmitPlan, source auth, etc.)
     // IMPORTANT: merge (don't replace) so SessionManager-provided browserPaneFns
     // survives across turns.
@@ -2087,6 +2119,9 @@ export class PiAgent extends BaseAgent {
     // session level restored when the turn ends (Pi applies thinking per subprocess session).
     let turnThinkingOverride: ThinkingLevel | undefined;
     try {
+      await this.emitAutomationEvent('UserPromptSubmit', {
+        hook_event_name: 'UserPromptSubmit', prompt: message,
+      }, this.turnAbort.signal);
       // Ensure subprocess is spawned and ready
       try {
         await this.ensureSubprocess();
@@ -2445,6 +2480,7 @@ export class PiAgent extends BaseAgent {
 
     // Clear bridge cache for this interrupted turn.
     this.preToolMetadataByCallId.clear();
+    this.workspaceHookToolInputs.clear();
   }
 
   forceAbort(reason: AbortReason): void {
@@ -2479,6 +2515,7 @@ export class PiAgent extends BaseAgent {
 
     // Clear bridge cache for aborted turn.
     this.preToolMetadataByCallId.clear();
+    this.workspaceHookToolInputs.clear();
 
     // For PlanSubmitted and AuthRequest, just interrupt the turn
     if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
@@ -2637,6 +2674,7 @@ export class PiAgent extends BaseAgent {
     this.subprocessReadyResolve = null;
     this.callbackPort = 0;
     this.preToolMetadataByCallId.clear();
+    this.workspaceHookToolInputs.clear();
     this.adapter.resetRecoveryState();
 
     if (result) {
@@ -2681,6 +2719,7 @@ export class PiAgent extends BaseAgent {
     this.subprocessReadyResolve = null;
     this.callbackPort = 0;
     this.preToolMetadataByCallId.clear();
+    this.workspaceHookToolInputs.clear();
 
     // Clear any in-flight overflow/auto-retry recovery state so a stale
     // fallback timer doesn't fire on a torn-down adapter.

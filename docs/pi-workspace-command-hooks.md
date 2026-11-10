@@ -1,0 +1,13 @@
+# Pi workspace command hooks
+
+Pi executes command hooks from the active workspace's `.claude/settings.json` independently of `automations.json`. The latter retains its prompt/webhook/script automation model; matching an automation is not a command-hook permission decision.
+
+The bridge runs the events Pi already emits: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and `Stop`. Prompt hooks complete before starting the turn. Pre-tool hooks complete before the existing permission pipeline and can refuse a tool even in Execute mode. Successful hooks do not override the existing permission pipeline. Post-tool payloads retain the actual tool-call ID and arguments from the subprocess tool-start event.
+
+Commands are trusted local settings, executed sequentially with JSON stdin in the session working directory. Settings environment is copied into the child; workspace, session directory, session ID and cwd come from the active agent, without mutating the server environment. The configured timeout defaults to 60 seconds and must be positive and at most 600 seconds. Cancellation/timeout terminates the hook process group on Unix. Combined stdout/stderr is limited to 1 MiB. Invalid settings, execution errors, nonzero exits and blocking JSON outputs refuse pre-tool/prompt events; notification-event failures are diagnostic.
+
+This is an enforcement bridge, not full Claude SDK output parity. Plain output, context/title fields and modified post-tool output are not injected into model context. `ask` decisions and pre-tool input rewrites are explicitly refused rather than silently treated as approval. Prompt/agent hook types are unsupported. It does not add session-start/session-end events that Pi does not already emit.
+
+Validation uses private actual Pi dispatch, with no provider call or tool mutation. The baseline returned `allow` despite a configured exit-2 command; the same candidate request returns `block`. Tests also cover session/environment identity, matcher selection, command ordering, JSON refusals, cancellation, timeout, output limits, prompt-before-subprocess behavior, and actual successful/failed post-tool payload correlation.
+
+Remote delivery remains separate. The current ElectInfo image runs Bun against filesystem TypeScript from its pinned source. Preserve that source/dependency pin when applying a bounded compatibility patch; build a distinct image with `redeploy=false`, verify its recorded source/infra revisions and command-hook path, then use the normal digest-pinned GitOps promotion. Actual native metadata allowance and an out-of-scope Write denial must be observed after activation. Source fixture success does not establish native adoption or full backend parity.
