@@ -66,8 +66,8 @@ describe('Pi workspace command hooks', () => {
       const event = failed ? 'PostToolUseFailure' : 'PostToolUse';
       const c = fixture({ [event]: group('cat > post-event.json') });
       const agent = new PiAgent({ provider: 'pi', workspace: { id: 'hook-test', name: 'Hooks', rootPath: c.workspace }, session: { id: c.sessionId, workspaceRootPath: c.workspace, workingDirectory: c.cwd, createdAt: Date.now(), lastUsedAt: Date.now() }, isHeadless: true } as any);
-      (agent as any).handleSubprocessEvent({ type: 'tool_execution_start', toolName: 'Write', toolCallId: 'paired-tool-1', args: { file_path: '/private-fixture' } });
-      (agent as any).handleSubprocessEvent({ type: 'tool_execution_end', toolName: 'Write', toolCallId: 'paired-tool-1', result: { content: [{ type: 'text', text: 'private result' }] }, isError: failed });
+      (agent as any).handleSubprocessEvent({ type: 'tool_execution_start', toolName: 'write', toolCallId: 'paired-tool-1', args: { path: '/private-fixture' } });
+      (agent as any).handleSubprocessEvent({ type: 'tool_execution_end', toolName: 'write', toolCallId: 'paired-tool-1', result: { content: [{ type: 'text', text: 'private result' }] }, isError: failed });
       let payload: any;
       for (let attempt = 0; attempt < 100; attempt++) {
         try { payload = JSON.parse(readFileSync(join(c.cwd, 'post-event.json'), 'utf8')); break; } catch { await Bun.sleep(10); }
@@ -76,6 +76,7 @@ describe('Pi workspace command hooks', () => {
       agent.destroy();
       expect(payload?.hook_event_name).toBe(event);
       expect(payload?.tool_use_id).toBe('paired-tool-1');
+      expect(payload?.tool_name).toBe('Write');
       expect(payload?.tool_input?.file_path).toBe('/private-fixture');
       expect(payload?.session_id).toBe(c.sessionId);
     }
