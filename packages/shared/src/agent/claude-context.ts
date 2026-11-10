@@ -129,7 +129,7 @@ export function createClaudeContext(options: ClaudeContextOptions): SessionToolC
     },
     validateAutomations: (wsPath: string) => validateAutomations(wsPath),
     validateToolIcons: () => validateToolIcons(),
-    validateAll: (wsPath: string) => validateAll(wsPath),
+    validateAll: (wsPath: string) => validateAll(wsPath, wsPath),
     validateSkill: (wsPath: string, slug: string) => validateSkill(wsPath, slug),
   };
 
