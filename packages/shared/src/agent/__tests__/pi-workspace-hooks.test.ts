@@ -112,6 +112,26 @@ describe('Pi workspace command hooks', () => {
     const c = fixture({ PreToolUse: group('sleep 30', { timeout: 0.02 }) });
     await expect(runWorkspaceCommandHooks('PreToolUse', {}, c)).rejects.toThrow('timed out');
   });
+  for (const mode of ['timeout', 'abort']) {
+    it('settles '+mode+' without waiting for an escaped descendant pipe', async () => {
+      const code = 'require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},1200)"],{detached:true,stdio:"inherit"});require("node:fs").writeFileSync("child-started","yes");setTimeout(()=>{},3000)';
+      const command = 'exec '+shellQuote(process.execPath)+' -e '+shellQuote(code);
+      const c = fixture({ PreToolUse: group(command, { timeout: mode === 'timeout' ? 0.25 : 2 }) });
+      const controller = new AbortController();
+      const timer = mode === 'abort' ? setTimeout(() => controller.abort(), 250) : undefined;
+      const started = performance.now();
+      try {
+        await expect(runWorkspaceCommandHooks('PreToolUse', {}, { ...c, signal: controller.signal })).rejects.toThrow(mode === 'timeout' ? 'timed out' : 'aborted');
+        const elapsed = performance.now()-started;
+        expect(readFileSync(join(c.cwd,'child-started'),'utf8')).toBe('yes');
+        expect(elapsed).toBeLessThan(800);
+      } finally {
+        clearTimeout(timer);
+        // This harmless escaped child exits itself; do not leave a background fixture.
+        await Bun.sleep(1300);
+      }
+    });
+  }
   it('honors cancellation before command execution', async () => {
     const c = fixture({ PreToolUse: group('touch should-not-exist') });
     const controller = new AbortController(); controller.abort();
