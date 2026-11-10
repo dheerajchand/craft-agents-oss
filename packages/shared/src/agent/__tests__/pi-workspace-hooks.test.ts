@@ -13,6 +13,7 @@ function fixture(hooks: Record<string, unknown>, env = {}) {
   writeFileSync(join(root, '.claude/settings.json'), JSON.stringify({ hooks, env }));
   return { workspace: root, cwd: root, sessionId: 'own-session', sessionDir: join(root, 'sessions/own-session') };
 }
+function shellQuote(value: string) { return "'" + value.replaceAll("'", "'\\''") + "'"; }
 function group(command: string, extra = {}) { return [{ matcher: '*', hooks: [{ type: 'command', command, ...extra }] }]; }
 
 describe('Pi workspace command hooks', () => {
@@ -57,7 +58,7 @@ describe('Pi workspace command hooks', () => {
   });
   it('delivers genuine session, cwd, tool id and settings environment to stdin/env without changing parent env', async () => {
     const before = { ...process.env };
-    const c = fixture({ PreToolUse: group('python3 -c \'import os,sys,json; p=json.load(sys.stdin); assert p["session_id"]=="own-session" and p["tool_use_id"]=="call1" and p["cwd"]==os.getcwd(); assert os.environ["CRAFT_SESSION_DIR"].endswith("sessions/own-session"); assert os.environ["OWN_SETTING"]=="kept"\'') }, { OWN_SETTING: 'kept', CRAFT_SESSION_DIR: '/foreign' });
+    const c = fixture({ PreToolUse: group(shellQuote(process.execPath) + ' -e ' + shellQuote('const p=JSON.parse(require("node:fs").readFileSync(0,"utf8")); if(p.session_id!=="own-session" || p.tool_use_id!=="call1" || p.cwd!==process.cwd() || !process.env.CRAFT_SESSION_DIR.endsWith("sessions/own-session") || process.env.OWN_SETTING!=="kept") throw Error("incorrect hook identity");')) }, { OWN_SETTING: 'kept', CRAFT_SESSION_DIR: '/foreign' });
     await runWorkspaceCommandHooks('PreToolUse', { tool_name: 'Write', tool_use_id: 'call1' }, c);
     expect(process.env).toEqual(before);
   });
@@ -93,7 +94,7 @@ describe('Pi workspace command hooks', () => {
     expect(() => readFileSync(join(c.cwd, 'should-not-exist'))).toThrow();
   });
   it('bounds output', async () => {
-    const c = fixture({ PreToolUse: group('python3 -c \'print("x"*1100000)\'') });
+    const c = fixture({ PreToolUse: group(shellQuote(process.execPath) + ' -e ' + shellQuote('process.stdout.write("x".repeat(1100000))')) });
     await expect(runWorkspaceCommandHooks('PreToolUse', {}, c)).rejects.toThrow('output exceeded');
   });
   it('fails closed on invalid settings and malformed JSON output', async () => {
