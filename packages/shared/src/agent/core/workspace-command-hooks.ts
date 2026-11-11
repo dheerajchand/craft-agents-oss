@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 export class WorkspaceCommandHookError extends Error {
   constructor(cause: unknown) {
@@ -17,17 +18,43 @@ export interface WorkspaceHookContext {
   signal?: AbortSignal;
 }
 
+/** Honor the existing managed policy declaration; unenrolled workspaces stay legacy. */
+async function workspaceSettings(workspace: string): Promise<string | undefined> {
+  const directory = join(workspace, '.claude');
+  let receiptText: string | undefined;
+  try { receiptText = await readFile(join(directory, 'craft-hook-registration.json'), 'utf8'); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (receiptText !== undefined) {
+    const receipt = JSON.parse(receiptText);
+    const policy = join(directory, 'craft-settings.json');
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || receipt.schema_version !== 1 || receipt.state !== 'active'
+      || receipt.workspace !== workspace || receipt.policy_path !== policy
+      || typeof receipt.policy_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.policy_sha256)) {
+      throw new Error('Invalid managed workspace hook registration');
+    }
+    const text = await readFile(policy, 'utf8');
+    if (createHash('sha256').update(text).digest('hex') !== receipt.policy_sha256) {
+      throw new Error('Stale managed workspace hook policy; repair its existing registration');
+    }
+    return text;
+  }
+  try { return await readFile(join(directory, 'settings.json'), 'utf8'); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
 // These are trusted, locally configured commands, as with Claude SDK hooks.
 // This is deliberately separate from prompt-based automations.json actions.
 export async function runWorkspaceCommandHooks(
   event: string, input: Record<string, unknown>, context: WorkspaceHookContext,
 ): Promise<void> {
-  let text: string;
-  try { text = await readFile(join(context.workspace, '.claude', 'settings.json'), 'utf8'); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw error;
-  }
+  const text = await workspaceSettings(context.workspace);
+  if (text === undefined) return;
   const settings = JSON.parse(text);
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)
     || (settings.hooks !== undefined && (!settings.hooks || typeof settings.hooks !== 'object'
