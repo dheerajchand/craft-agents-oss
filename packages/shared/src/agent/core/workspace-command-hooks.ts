@@ -44,20 +44,26 @@ export async function runWorkspaceCommandHooks(
     CRAFT_AGENT_WORKSPACE: context.workspace,
     CRAFT_WORKSPACE_PATH: context.workspace,
     CRAFT_SESSION_DIR: context.sessionDir,
-    CLAUDE_PROJECT_DIR: context.cwd,
   });
   const payload = JSON.stringify({ ...input, hook_event_name: event,
     session_id: context.sessionId, cwd: context.cwd });
-  for (const group of groups) {
+  for (const [groupIndex, group] of groups.entries()) {
     if (group.matcher && group.matcher !== '*'
       && !new RegExp(group.matcher).test(String(input.tool_name ?? ''))) continue;
     if (!Array.isArray(group.hooks)) throw new Error(`Invalid ${event} hook group`);
-    for (const hook of group.hooks) {
+    for (const [hookIndex, hook] of group.hooks.entries()) {
       if (hook.type !== 'command') throw new Error('Unsupported workspace hook type');
       if (typeof hook.command !== 'string' || !hook.command.trim()) throw new Error('Invalid hook command');
       const seconds = hook.timeout ?? 60;
       if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 600) throw new Error('Invalid hook timeout');
-      await executeCommand(hook.command, payload, env, context, seconds * 1000);
+      try {
+        await executeCommand(hook.command, payload, env, context, seconds * 1000);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        // Identify the configured hook without exposing command arguments,
+        // environment values, or the submitted tool/prompt payload.
+        throw new Error(`Workspace ${event} hook ${groupIndex + 1}.${hookIndex + 1}: ${detail.slice(0, 4096)}`, { cause: error });
+      }
     }
   }
 }
@@ -107,7 +113,7 @@ function executeCommand(command: string, payload: string, env: NodeJS.ProcessEnv
           if (result.continue === false || result.decision === 'block'
             || result.hookSpecificOutput?.permissionDecision === 'deny') {
             reject(new Error(result.hookSpecificOutput?.permissionDecisionReason
-              || result.reason || result.stopReason || 'Workspace hook denied this action'));
+              || result.reason || result.stopReason || result.systemMessage || 'Workspace hook denied this action'));
             return;
           }
           if (result.hookSpecificOutput?.permissionDecision
