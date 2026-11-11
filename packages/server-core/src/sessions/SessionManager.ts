@@ -3830,6 +3830,57 @@ export class SessionManager implements ISessionManager {
     this.sendEvent({ type: 'session_created', sessionId }, workspaceId)
   }
 
+  /** Reparent metadata only: never respawn, unarchive, relabel or restart a session. */
+  async setSessionParent(sessionId: string, parentSessionId: string | null): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) throw new Error('Session not found')
+    if (parentSessionId !== null && (typeof parentSessionId !== 'string' || !parentSessionId.trim())) {
+      throw new Error('Parent session must be an existing session ID or null for root')
+    }
+    const visited = new Set([sessionId])
+    let ancestorId: string | undefined = parentSessionId ?? undefined
+    while (ancestorId !== undefined) {
+      if (visited.has(ancestorId)) throw new Error('Session parent would create a cycle')
+      visited.add(ancestorId)
+      const ancestor = this.sessions.get(ancestorId)
+      if (!ancestor) throw new Error('Parent session or ancestor not found')
+      if (ancestor.workspace.id !== managed.workspace.id || ancestor.workspace.rootPath !== managed.workspace.rootPath) {
+        throw new Error('Parent session must belong to the same workspace')
+      }
+      ancestorId = ancestor.parentSessionId
+    }
+    const requestedParent = parentSessionId ?? undefined
+    if (managed.parentSessionId === requestedParent) {
+      const header = readSessionHeader(getSessionFilePath(managed.workspace.rootPath, sessionId))
+      if (header && header.parentSessionId === requestedParent) return
+    }
+    // A metadata-only move must not hydrate a cold session: the ordinary
+    // persist path also recovers queued turns, which could wake archived work.
+    const coldSnapshot = !managed.messagesLoaded
+      ? loadStoredSession(managed.workspace.rootPath, sessionId) : undefined
+    if (!managed.messagesLoaded && !coldSnapshot) throw new Error('Stored session not found')
+    // Validate and update synchronously before the first await so concurrent
+    // reparent requests cannot validate against an out-of-date graph.
+    managed.parentSessionId = parentSessionId ?? undefined
+    this.setMetadataWriteGuard(managed)
+    if (coldSnapshot) {
+      sessionPersistenceQueue.enqueue({ ...coldSnapshot, parentSessionId: managed.parentSessionId })
+    } else {
+      this.persistSession(managed)
+    }
+    await this.flushSession(sessionId)
+    // A later concurrent move owns its write/event; do not broadcast a stale
+    // parent after awaiting this one. The queue logs IO errors rather than
+    // rejecting, so verify durability before acknowledging the current move.
+    if (managed.parentSessionId !== requestedParent) return
+    const persisted = readSessionHeader(getSessionFilePath(managed.workspace.rootPath, sessionId))
+    if (!persisted || persisted.parentSessionId !== requestedParent) {
+      throw new Error('Session parent could not be persisted; inspect storage and retry the move')
+    }
+    this.sendEvent({ type: 'session_metadata_changed', sessionId,
+      changes: { parentSessionId } }, managed.workspace.id)
+  }
+
   /** Resolved working directory of a live session (used by the Tasks Conductor so child
    *  sessions inherit the orchestrator's cwd). Undefined if the session has none or is unknown. */
   getSessionWorkingDirectory(sessionId: string): string | undefined {

@@ -77,6 +77,7 @@ export interface ISessionManager {
   archiveSession(sessionId: string): Promise<void>
   unarchiveSession(sessionId: string): Promise<void>
   renameSession(sessionId: string, name: string): Promise<void>
+  setSessionParent(sessionId: string, parentSessionId: string | null): Promise<void>
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<void>
   markSessionRead(sessionId: string): Promise<void>
   markSessionUnread(sessionId: string): Promise<void>
