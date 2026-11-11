@@ -2,6 +2,7 @@ import * as React from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
+import { rehypeReactRef } from './rehype-react-ref'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import 'katex/dist/katex.min.css'
@@ -621,7 +622,7 @@ export function Markdown({
     <div className={cn('markdown-content', className)}>
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={[rehypeKatex, rehypeRaw]}
+        rehypePlugins={[rehypeKatex, rehypeRaw, rehypeReactRef]}
         components={components}
         urlTransform={markdownUrlTransform}
       >
