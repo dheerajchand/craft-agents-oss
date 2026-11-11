@@ -22,7 +22,7 @@ describe('Pi workspace command hooks', () => {
     const agent = new PiAgent({ provider: 'pi', workspace: { id: 'hook-test', name: 'Hooks', rootPath: c.workspace }, session: { id: c.sessionId, workspaceRootPath: c.workspace, workingDirectory: c.cwd, createdAt: Date.now(), lastUsedAt: Date.now() }, isHeadless: true } as any);
     const sent: any[] = []; (agent as any).send = (value: unknown) => sent.push(value);
     await (agent as any).handlePreToolUseRequest({ requestId: 'private-write', toolName: 'Write', toolCallId: 'actual-call-id', input: { file_path: join(c.workspace, 'out-of-scope') } });
-    expect(sent).toEqual([{ type: 'pre_tool_use_response', requestId: 'private-write', action: 'block', reason: 'outside assigned scope' }]);
+    expect(sent).toEqual([{ type: 'pre_tool_use_response', requestId: 'private-write', action: 'block', reason: 'Workspace PreToolUse hook 1.1: outside assigned scope' }]);
     agent.destroy();
   });
   it('awaits a prompt-hook denial before starting the Pi subprocess', async () => {
@@ -86,6 +86,27 @@ describe('Pi workspace command hooks', () => {
     const c = fixture({ PreToolUse: group(shellQuote(process.execPath) + ' -e ' + shellQuote('const p=JSON.parse(require("node:fs").readFileSync(0,"utf8")); if(p.session_id!=="own-session" || p.tool_use_id!=="call1" || p.cwd!==process.cwd() || !process.env.CRAFT_SESSION_DIR.endsWith("sessions/own-session") || process.env.OWN_SETTING!=="kept") throw Error("incorrect hook identity");')) }, { OWN_SETTING: 'kept', CRAFT_SESSION_DIR: '/foreign' });
     await runWorkspaceCommandHooks('PreToolUse', { tool_name: 'Write', tool_use_id: 'call1' }, c);
     expect(process.env).toEqual(before);
+  });
+  it('preserves actual Pi host identity instead of synthesizing a Claude marker', async () => {
+    const inherited = process.env.CLAUDE_PROJECT_DIR ?? null;
+    const check = 'if((process.env.CLAUDE_PROJECT_DIR??null)!==' + JSON.stringify(inherited) + ') throw Error("invented Claude runtime marker");';
+    const c = fixture({ UserPromptSubmit: group(shellQuote(process.execPath) + ' -e ' + shellQuote(check)) });
+    await runWorkspaceCommandHooks('UserPromptSubmit', { prompt: 'continue own task' }, c);
+    const explicit = fixture({ UserPromptSubmit: group(shellQuote(process.execPath) + ' -e ' + shellQuote('if(process.env.CLAUDE_PROJECT_DIR!=="explicit-setting") throw Error("lost trusted setting");')) }, { CLAUDE_PROJECT_DIR: 'explicit-setting' });
+    await runWorkspaceCommandHooks('UserPromptSubmit', {}, explicit);
+  });
+  it('preserves a bounded systemMessage with event and configured hook position', async () => {
+    const c = fixture({ UserPromptSubmit: [{ hooks: [
+      { type: 'command', command: 'exit 0' },
+      { type: 'command', command: `printf '%s' '${JSON.stringify({ continue: false, systemMessage: 'Repair own selected Task signal: ' + 'x'.repeat(5000) })}'` },
+    ] }] });
+    let message = '';
+    try { await runWorkspaceCommandHooks('UserPromptSubmit', { prompt: 'private prompt' }, c); }
+    catch (error) { message = (error as Error).message; }
+    expect(message).toStartWith('Workspace UserPromptSubmit hook 1.2: Repair own selected Task signal:');
+    expect(message.length).toBeLessThan(4200);
+    expect(message).not.toContain('private prompt');
+    expect(message).not.toContain('printf');
   });
   it('does not run nonmatching tools', async () => {
     const c = fixture({ PreToolUse: [{ matcher: '^Bash$', hooks: [{ type: 'command', command: 'exit 2' }] }] });
