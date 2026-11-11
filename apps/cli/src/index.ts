@@ -364,6 +364,25 @@ async function cmdSessionMessages(client: CliRpcClient, args: CliArgs): Promise<
   out(result, args.json)
 }
 
+/** Explicit parent/root selection prevents an omitted argument from detaching a session. */
+export function parseSessionReparent(rest: string[]): { sessionId: string; parentSessionId: string | null } {
+  if (rest.length === 2 && rest[0] && !rest[0].startsWith('-') && rest[1] === '--root') {
+    return { sessionId: rest[0], parentSessionId: null }
+  }
+  if (rest.length === 3 && rest[0] && !rest[0].startsWith('-') && rest[1] === '--parent'
+      && rest[2] && !rest[2].startsWith('-')) {
+    return { sessionId: rest[0], parentSessionId: rest[2] }
+  }
+  throw new Error('Usage: session reparent <session-id> (--parent <parent-id> | --root)')
+}
+
+async function cmdSessionReparent(client: CliRpcClient, args: CliArgs): Promise<void> {
+  const { sessionId, parentSessionId } = parseSessionReparent(args.rest)
+  await client.connect()
+  await client.invoke('sessions:command', sessionId, { type: 'setParent', parentSessionId })
+  out(args.json ? { sessionId, parentSessionId } : `Session ${sessionId} parent: ${parentSessionId ?? '(root)'}`, args.json)
+}
+
 async function cmdSessionDelete(client: CliRpcClient, args: CliArgs): Promise<void> {
   const sessionId = args.rest[0]
   if (!sessionId) {
@@ -1956,6 +1975,7 @@ Commands:
   session create         Create a session (--name, --mode)
   session messages <id>  Print session message history
   session delete <id>    Delete a session
+  session reparent <id>  Set --parent <id> or --root (same workspace)
   send <id> <message>    Send message and stream AI response
   cancel <id>            Cancel in-progress processing
   invoke <channel> [...] Raw RPC call with JSON args
@@ -2061,6 +2081,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
             break
           case 'messages':
             await cmdSessionMessages(client, args)
+            break
+          case 'reparent':
+            await cmdSessionReparent(client, args)
             break
           case 'delete':
             await cmdSessionDelete(client, args)

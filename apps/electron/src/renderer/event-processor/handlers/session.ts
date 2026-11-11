@@ -767,9 +767,12 @@ export function handleSessionMetadataChanged(
   event: SessionMetadataChangedEvent
 ): ProcessResult {
   const { session, streaming } = state
+  const { parentSessionId, ...otherChanges } = event.changes
   return {
     state: {
-      session: { ...session, ...event.changes },
+      session: { ...session, ...otherChanges,
+        ...('parentSessionId' in event.changes
+          ? { parentSessionId: parentSessionId ?? undefined } : {}) },
       streaming,
     },
     effects: [],
