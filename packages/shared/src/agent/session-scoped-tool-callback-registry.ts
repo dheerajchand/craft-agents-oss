@@ -55,6 +55,8 @@ export interface SessionScopedToolCallbacks {
   setSessionLabelsFn?: (sessionId: string | undefined, labels: string[]) => void | Promise<void>;
   /** Set status on a session (defaults to current). */
   setSessionStatusFn?: (sessionId: string | undefined, status: string) => void | Promise<void>;
+  /** Change a session's display parent without changing its runtime or authority. */
+  setSessionParentFn?: (sessionId: string | undefined, parentSessionId: string | null) => Promise<void>;
   /** Archive (archived=true) or unarchive (archived=false) a session by ID. */
   archiveSessionFn?: (sessionId: string, archived: boolean) => void | Promise<void>;
   /** Get detailed info about a session (defaults to current). */

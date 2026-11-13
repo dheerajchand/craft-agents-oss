@@ -5125,6 +5125,14 @@ export class SessionManager implements ISessionManager {
         setSessionStatusFn: async (sessionId: string | undefined, status: string) => {
           await this.setSessionStatus(sessionId ?? managed.id, status as SessionStatus)
         },
+        setSessionParentFn: async (sessionId: string | undefined, parentSessionId: string | null) => {
+          const target = this.sessions.get(sessionId ?? managed.id)
+          if (!target || target.workspace.id !== managed.workspace.id ||
+              target.workspace.rootPath !== managed.workspace.rootPath) {
+            throw new Error('Target session must exist in the invoking workspace')
+          }
+          await this.setSessionParent(target.id, parentSessionId)
+        },
         // archive_session — archive/unarchive ANOTHER session by ID. Scoped to the
         // invoking session's workspace and blocked mid-turn (guard logic lives in
         // archive-guards.ts so it is unit-testable); delegates to the existing
