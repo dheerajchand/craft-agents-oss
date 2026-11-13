@@ -42,6 +42,7 @@ import { handleRenderTemplate } from './handlers/render-template.ts';
 import { handleSendDeveloperFeedback } from './handlers/send-developer-feedback.ts';
 import { handleSetSessionLabels } from './handlers/set-session-labels.ts';
 import { handleSetSessionStatus } from './handlers/set-session-status.ts';
+import { handleSetSessionParent } from './handlers/set-session-parent.ts';
 import { handleGetSessionInfo } from './handlers/get-session-info.ts';
 import { handleListSessions } from './handlers/list-sessions.ts';
 import { handleListBackgroundTasks } from './handlers/list-background-tasks.ts';
@@ -260,6 +261,11 @@ export const SetSessionStatusSchema = z.object({
 
 export const GetSessionInfoSchema = z.object({
   sessionId: z.string().optional().describe('Session ID to query. Omit to get info about the current session.'),
+});
+
+export const SetSessionParentSchema = z.object({
+  sessionId: z.string().min(1).optional().describe('Session to move. Omit for the current session.'),
+  parentSessionId: z.string().min(1).nullable().describe('Existing parent in this workspace, or null to make a root peer.'),
 });
 
 export const ArchiveSessionSchema = z.object({
@@ -636,6 +642,7 @@ Optional overrides: \`model\`, \`llmConnection\`, \`permissionMode\`, \`thinking
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
 The spawned session appears in the session list and runs fire-and-forget.
+Its display parent defaults to the creator. When the assigned role belongs elsewhere, use set_session_parent under existing maintenance authority: root peers for workspace stewards, the coordinator for business hubs, and the hub for its workers. Creating a session does not make the creator its supervisor.
 Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
 
   send_developer_feedback: `Send freeform feedback to the Craft Agent development team.
@@ -658,6 +665,12 @@ IMPORTANT: never move a task into a closed status (such as "done" or "cancelled"
 
 Archiving removes a session from the active list and unread counts — it does NOT delete it (pass archived=false to restore). Use it to tidy up finished or superseded sessions.
 Requires an explicit sessionId and cannot target your own session. Use list_sessions / get_session_info to find the target session's ID.`,
+
+  set_session_parent: `Move a session under another session in this workspace, or pass parentSessionId:null to make it a root peer. Omit sessionId to move yourself.
+
+Use within existing workspace/session-maintenance authority to put stewards at the workspace root, business hubs under their coordinator, and workers under their hub. A session's creator is not automatically its supervisor. Read the current role assignments before choosing a parent.
+
+It does not restart agents, transfer task authority, change permissions/models/status/labels, or alter branch provenance. Parent placement also affects existing Task-board subsession/orchestrator eligibility; keep designated board orchestrators at the root. Missing/foreign parents and cycles are rejected.`,
 
   project_memory_append: `Add a note to this session's project memory (MEMORY.md, shown to every session in the project as <project_memory>). Append-only: the note is added at the end under a dated heading naming this session, and nothing else in the file changes.
 
@@ -823,6 +836,7 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   // Session self-management tools (registry — use context callbacks to reach SessionManager)
   { name: 'set_session_labels', description: TOOL_DESCRIPTIONS.set_session_labels, inputSchema: SetSessionLabelsSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionLabels },
   { name: 'set_session_status', description: TOOL_DESCRIPTIONS.set_session_status, inputSchema: SetSessionStatusSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionStatus },
+  { name: 'set_session_parent', description: TOOL_DESCRIPTIONS.set_session_parent, inputSchema: SetSessionParentSchema, executionMode: 'registry', safeMode: 'block', handler: handleSetSessionParent },
   { name: 'archive_session', description: TOOL_DESCRIPTIONS.archive_session, inputSchema: ArchiveSessionSchema, executionMode: 'registry', safeMode: 'block', handler: handleArchiveSession },
   { name: 'create_task', description: TOOL_DESCRIPTIONS.create_task, inputSchema: CreateTaskSchema, executionMode: 'registry', safeMode: 'block', handler: handleCreateTask },
   { name: 'project_memory_append', description: TOOL_DESCRIPTIONS.project_memory_append, inputSchema: ProjectMemoryAppendSchema, executionMode: 'registry', safeMode: 'block', handler: handleProjectMemoryAppend },
@@ -875,6 +889,7 @@ export const CODING_PROFILE_TOOLS: Readonly<Record<string, 'always' | 'sources' 
   spawn_session: 'always',
   get_session_info: 'always',
   list_sessions: 'always',
+  set_session_parent: 'always',
   // PR tools are core to Coding mode; each returns a clean "unavailable" result off a GitHub checkout
   // (no async git gating — see plan D7), so they are always offered there (and only there: CODING_ONLY_TOOLS).
   pr_status: 'always',
