@@ -63,6 +63,14 @@ export function attachSessionSelfManagementBindings(
     enumerable: true,
   });
 
+  Object.defineProperty(context, 'setSessionParent', {
+    get() {
+      return getSessionScopedToolCallbacks(sessionId)?.setSessionParentFn;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+
   Object.defineProperty(context, 'listSessions', {
     get() {
       return getSessionScopedToolCallbacks(sessionId)?.listSessionsFn;

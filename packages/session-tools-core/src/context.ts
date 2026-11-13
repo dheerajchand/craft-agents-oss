@@ -315,6 +315,9 @@ export interface SessionToolContext {
   /** Set status on a session. Defaults to current session if no ID given. Injected by backend. */
   setSessionStatus?(sessionId: string | undefined, status: string): void | Promise<void>;
 
+  /** Change hierarchy within the invoking workspace; null makes a root peer. */
+  setSessionParent?(sessionId: string | undefined, parentSessionId: string | null): Promise<void>;
+
   /** Archive (archived=true) or unarchive (archived=false) another session by ID. Injected by backend. */
   archiveSession?(sessionId: string, archived: boolean): void | Promise<void>;
 

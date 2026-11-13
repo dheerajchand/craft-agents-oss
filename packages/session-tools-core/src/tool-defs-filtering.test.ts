@@ -126,7 +126,7 @@ describe('session tool filtering helpers', () => {
       const prTools = ['pr_status', 'pr_bind', 'pr_unbind', 'pr_set_auto_merge'];
       expect(names({ profile: 'coding' })).toEqual([
         'SubmitPlan', 'mermaid_validate', 'source_test', 'transform_data', 'send_developer_feedback', 'call_llm', 'spawn_session',
-        'browser_tool', ...pages, ...prTools, 'get_session_info', 'list_sessions', 'list_background_tasks',
+        'browser_tool', 'set_session_parent', ...pages, ...prTools, 'get_session_info', 'list_sessions', 'list_background_tasks',
       ]);
       expect(names({ profile: 'coding', includeDeveloperFeedback: false })).toEqual(names({ profile: 'coding' }).filter(name => name !== 'send_developer_feedback'));
     });
